@@ -11,7 +11,7 @@
 // done ARRIVED, idle IN ORBIT (drifting).
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, terminals, spaces, panes, openOverlay, run, setAgentOrder, theme, layout, shared, setShared } from "herdr";
+import { hc, notify, agents, terminals, spaces, panes, openOverlay, run, setAgentOrder, theme, layout, shared, setShared } from "herdr";
 
 const SHIPS = ["lumen", "atlas", "nova", "halo", "drift", "quasar", "pioneer", "orbiter", "comet", "zephyr"];
 const SHIP_NAME = { lumen: "LUMEN PROBE", atlas: "ATLAS HAULER", nova: "NOVA SAUCER", halo: "HALO STATION", drift: "DRIFT POD",
@@ -22,6 +22,7 @@ const CAST = "cosmos.fleet";
 const MIN = "cards.min";   // { <terminal address>:<created_ms>: true } for minimised cards
 const KEEP_CAST = 60;
 const STATE = {
+  detached: { word: "DETACHED", frames: null },
   working: { word: "IN FLIGHT", frames: null },
   blocked: { word: "MAYDAY", frames: ["MAYDAY", "MAYDAY", "      "] },
   done: { word: "ARRIVED ✦", frames: ["ARRIVED ✦", "ARRIVED ✧"] },
@@ -101,6 +102,24 @@ function actionButtons(a, s, kids, t) {
     .when(s?.loc === "wt" && Boolean(s?.dir), (el) => el.child(chip("act-wt", svg("mods/cosmos-agents/bin.svg").size(12).text_color(t.accent), "Close this session and delete its worktree", "worktree")));
 }
 
+// An attached session's pane can lose Claude (a restart, a crash) and fall back to a shell, while
+// its old labels stay. Such a card is DETACHED, and clicking it reattaches: it only types when the
+// pane is at a shell prompt, so anything else running there just gets focus.
+const detachedFrom = (t) => {
+  const fg = t.foreground;
+  return Boolean(fg) && !(fg.argv ?? []).join(" ").includes("claude") && !/^\d+\.\d+\.\d+/.test(fg.name ?? "");
+};
+const atShell = (t) => /^-?(zsh|bash|fish|sh|dash)$/.test(String(t.foreground?.name ?? "").split("/").pop());
+async function reattach(k) {
+  run("pane.focus", { terminal: k.address });
+  if (!k.shell || !/^[A-Za-z0-9_-]+$/.test(k.bg ?? "")) return;
+  const profile = k.stats?.profile;
+  const config = profile && profile !== "default" && /^[A-Za-z0-9_-]+$/.test(profile) ? `CLAUDE_CONFIG_DIR="$HOME/.claude-${profile}" ` : "";
+  await hc(["keys", k.address, "ctrl+u"]);   // anything half-typed at the prompt
+  const r = await hc(["send", k.address, `${config}claude attach ${k.bg}`]);
+  if (r.code !== 0) notify({ title: "Couldn't reattach", body: (r.stderr || r.stdout || "").trim(), level: "error" });
+}
+
 // Attached background sessions (`claude --bg` in a child terminal labelled claude.bg), by
 // their parent's address, as agent-shaped rows. Their stats label names the parent.
 function bgChildren(all) {
@@ -113,8 +132,8 @@ function bgChildren(all) {
     if (!s.parent) continue;
     const machine = t.address.includes("/") ? `${t.address.split("/")[0]}/` : "";
     const key = `${machine}${s.parent}`;
-    const status = s.state === "working" || s.state === "busy" ? "working" : /input|wait|block/.test(s.state ?? "") ? "blocked" : "idle";
-    out.set(key, [...(out.get(key) ?? []), { address: t.address, app: "claude-code", status, focused: false, bg: t.labels["claude.bg"], tab_name: s.name ?? t.address, stats: s }]);
+    const status = detachedFrom(t) ? "detached" : s.state === "working" || s.state === "busy" ? "working" : /input|wait|block/.test(s.state ?? "") ? "blocked" : "idle";
+    out.set(key, [...(out.get(key) ?? []), { address: t.address, app: "claude-code", status, shell: atShell(t), focused: false, bg: t.labels["claude.bg"], tab_name: s.name ?? t.address, stats: s }]);
   }
   for (const kids of out.values()) kids.sort((x, y) => String(x.stats.name ?? x.address).localeCompare(String(y.stats.name ?? y.address)));
   return out;
@@ -130,6 +149,7 @@ const gauge = (v) => (v == null ? "▱".repeat(BAR) : "▰".repeat(Math.round((v
 
 // Everything a minimised card is hiding, for its tooltip.
 function foldedTip(a, s, name, who, word, machine, now, kids) {
+  if (a.status === "detached") return `${name}\nDetached. Click to reattach.`;
   const where = machine ? ` @${machine}` : "";
   const lines = [name, [who, word].filter(Boolean).join(" · ")];
   if (s) {
@@ -295,7 +315,9 @@ export default class Fleet extends View {
         .child(status())
         .when(this.hoveredCard === a.address, (el) => el.child(this.minButton(a, false, t))),
     ];
-    if (s) {
+    if (a.status === "detached") {
+      rows.push(row("detached", [grow("Click to reattach", t.accent)]));
+    } else if (s) {
       rows.push(row("where", [grow(s.repo || "~", t.muted), span(`◉ ${machine}`, t.dim)]));
       if (s.branch) rows.push(row("branch", [grow(`${s.loc === "wt" ? "wt" : "br"}: ${s.branch}`, t.muted)]));
       const credits = s.tokens != null && s.cost == null ? `${Math.floor(s.tokens / 1000)}k tok` : `$${(s.cost ?? 0).toFixed(2)}`;
@@ -338,7 +360,7 @@ export default class Fleet extends View {
       .when(nested || kids.length > 0, (el) => el.border(1).border_color(this.focusedTerm === a.address ? t.foreground : "#00000000"))
       .cursor_pointer()
       .hover((x) => x.bg(t.hover))
-      .on_click(() => run(nested ? "pane.focus" : "agent.focus", { terminal: a.address }))
+      .on_click(() => a.status === "detached" ? reattach(a) : run(nested ? "pane.focus" : "agent.focus", { terminal: a.address }))
       .on_hover((on, cx) => {
         if (on) this.hoveredCard = a.address;
         else if (this.hoveredCard === a.address) this.hoveredCard = null;
