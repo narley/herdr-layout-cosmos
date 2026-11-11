@@ -5,7 +5,7 @@
 // herdr-traveler's traveler-tabs (Apache-2.0, Frank Lin), itself from Herdr's tabs mod.
 import { View, div } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings } from "herdr";
+import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings, appHome, readTextFile } from "herdr";
 
 const ORBIT = ["◜", "◝", "◞", "◟"];
 const DOTS = ["#f2b16a", "#7ec8ff", "#c38cff", "#7ef0b0", "#ff8fa3", "#ffd479", "#9ad8d0"];
@@ -20,7 +20,9 @@ function find(node, id) {
 }
 
 export default class Tabs extends View {
-  init() {
+  init(_props, cx) {
+    // The Workflows button opens a `workflows` mod, so it shows only once one is installed in the Herdr home.
+    cx.spawn(async (cx) => { this.workflows = (await readTextFile(`${appHome()}/mods/workflows/mod.json`).catch(() => null)) !== null; cx.notify(); });
     this.pressed = null;
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
   }
@@ -104,6 +106,7 @@ export default class Tabs extends View {
         .child(div().text_color(t.accent).child("◉")).child((space?.machine ?? "local")))
       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(5).overflow_x_scrollbar().children(shown.map(item)))
       .child(pill("tab-new", "+ Launch", false, () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
+      .when(Boolean(this.workflows), (el) => el.child(pill("workflows", "Workflows", false, () => run("mod.open", { name: "workflows" }))))
       .when(enabled.includes("files"), (el) => el.child(panelButton("files")))
       .when(enabled.includes("changes"), (el) => el.child(panelButton("changes")))
       .when(w?.buttons, (el) => el.child(pill("minimize", "–", false, () => run("window.minimize")))
