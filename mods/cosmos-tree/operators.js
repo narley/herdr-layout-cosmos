@@ -290,13 +290,13 @@ export class Fleet {
 
   // A minimised card's one line: avatar, name, attached sessions folded inside, status.
   // The tooltip is on the text, not the whole row, so the button keeps its own.
-  foldedRow(a, name, who, status, tip, kids, t) {
+  foldedRow(a, name, who, status, tip, kids, t, s) {
     return [
       h_flex().id(`card-info-${a.address}`).flex_1().min_w(0).h_full().gap(7).items_center().tooltip(tip)
         .when(Boolean(who), (el) => el.child(div().flex_none().min_w(46).text_size(9.5).font_semibold().text_color(t.muted).child(who)))
         .child(div().flex_1().min_w(0).truncate().font_semibold().text_size(12).text_color(t.foreground).child(name))
         .child(status),
-      this.hoveredCard === a.address && this.minButton(a, true, t),
+      this.hoveredCard === a.address && actionButtons(a, s, kids, t), this.hoveredCard === a.address && this.minButton(a, true, t),
     ].filter(Boolean);
   }
 
@@ -373,7 +373,7 @@ export class Fleet {
       .when(folded, (el) => {
         const who = SHORT[this.cast?.[this.keys?.get(a.address)]?.ship];
         const full = nameOf(a, s, sp);
-        return el.children(this.foldedRow(a, full, who, status(), foldedTip(a, s, full, SHIP_NAME[this.cast?.[this.keys?.get(a.address)]?.ship], st.word, machine, now, kids), kids, t));
+        return el.children(this.foldedRow(a, full, who, status(), foldedTip(a, s, full, SHIP_NAME[this.cast?.[this.keys?.get(a.address)]?.ship], st.word, machine, now, kids), kids, t, s));
       })
       .when(!folded, (el) => el.child(this.avatar(a, color, t))
         .child(v_flex().flex_1().min_w(0).gap(1).children(rows))
